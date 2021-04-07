@@ -6,13 +6,18 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
+import ChameleonFramework
 
 
-class ToDoListViewController: UITableViewController {
+class ToDoListViewController: SwipeTableViewController {
+    
+    let realm = try! Realm()
     
     //itemの配列を用意
-    var itemArray = [Item]()
+    var toDoItems: Results<Item>?
+    
+    @IBOutlet weak var searchBar: UISearchBar!
     
     //親カテゴリー
     var selectedCategory: Category? {
@@ -22,51 +27,103 @@ class ToDoListViewController: UITableViewController {
         }
     }
     
-    //NSPersistentContainer内にラッピングされたNSManagedObjectContextをAppDelegate経由でオブジェクト化
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
-
-    
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        tableView.separatorStyle = .none
         
         //保存場所をプリント
         print(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask))
    
     }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        if let colorHex = selectedCategory?.color {
+            
+            title = selectedCategory!.name
+            
+            guard let navBar = navigationController?.navigationBar else {fatalError("Navigation controller does not exist.")}
+            
+            if let navBarColor = UIColor(hexString: colorHex) {
+                navBar.backgroundColor = navBarColor
+                navBar.tintColor = ContrastColorOf(navBarColor, returnFlat: true)
+                navBar.largeTitleTextAttributes = [NSAttributedString.Key.foregroundColor: ContrastColorOf(navBarColor, returnFlat: true)]
+                view.backgroundColor = navBarColor
+                searchBar.barTintColor = navBarColor
+            }
+            
+           
+        }
+        
+        
+        
+    }
 
 
-    //MARK - TableView Datasource Methods
+    //MARK: - TableView Datasource Methods
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return itemArray.count
+        return toDoItems?.count ?? 1
     }
     
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         
-        let cell = tableView.dequeueReusableCell(withIdentifier: "ToDoItemCell", for: indexPath)
+        let cell = super.tableView(tableView, cellForRowAt: indexPath)
         
-        let item = itemArray[indexPath.row]
-        
-        cell.textLabel?.text = item.title
-        
-        //三項演算子
-        cell.accessoryType = item.done ? .checkmark : .none
+        if let item = toDoItems?[indexPath.row] {
+            cell.textLabel?.text = item.title
+            
+            if let color = UIColor(hexString: selectedCategory!.color)?.darken(byPercentage: CGFloat(indexPath.row) / CGFloat(toDoItems!.count)) {
+                cell.backgroundColor = color
+                cell.textLabel?.textColor = ContrastColorOf(color, returnFlat: true)
+            }
+            
+            //三項演算子
+            cell.accessoryType = item.done ? .checkmark : .none
+        } else {
+            cell.textLabel?.text = "アイテムが追加されていません。"
+        }
         
         return cell
     }
     
-    //MARK - TableView Delegate Methods
+    //MARK: - TableView Delegate Methods
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         
-        //チェック状態を反転させる
-        itemArray[indexPath.row].done = !itemArray[indexPath.row].done
+        if let item = toDoItems?[indexPath.row] {
+            do {
+                try realm.write {
+//                    realm.delete(item)
+                    item.done = !item.done
+                }
+            } catch {
+                print("Error saving done status, \(error)")
+            }
+        }
         
-        //doneアトリビュートが変更されたので保存
-        saveItems()
+        tableView.reloadData()
         
         tableView.deselectRow(at: indexPath, animated: true)
     }
     
-    //MARK - Add New Items
+    //MARK: - Delete Data From Swipe
+    override func updateDataModel(at indexPath: IndexPath) {
+        super.updateDataModel(at: indexPath)
+        
+        if let itemsForDeletion = toDoItems?[indexPath.row] {
+            do {
+                try realm.write {
+                    realm.delete(itemsForDeletion)
+                }
+            } catch {
+                print("Error deleting item, \(error)")
+            }
+        }
+        
+    }
+    
+    //MARK: - Add New Items
     @IBAction func addButtonPressed(_ sender: UIBarButtonItem) {
         
         var textField = UITextField()
@@ -75,16 +132,23 @@ class ToDoListViewController: UITableViewController {
         let alert = UIAlertController(title: "新しいToDoを追加します", message: "", preferredStyle: .alert)
         let action = UIAlertAction(title: "追加", style: .default) { [weak self] (action) in
             
-            //NSManagedObjectContextをオブジェクト化
-            let newItem = Item(context: self!.context)
-            //各プロパティを設定
-            newItem.title = textField.text!
-            newItem.done = false
-            newItem.parentCategory = self?.selectedCategory
-            //itemを追加
-            self?.itemArray.append(newItem)
-            //データを保存
-            self?.saveItems()
+            if let currentCategory = self?.selectedCategory {
+                do {
+                    try self?.realm.write {
+                        
+                        let newItem = Item()
+                        newItem.title = textField.text!
+                        newItem.dateCreated = Date()
+                        currentCategory.items.append(newItem)
+                        
+                        self?.realm.add(newItem)
+                    }
+                } catch {
+                    print("Error saving new items, \(error)")
+                }
+            }
+            
+            self?.tableView.reloadData()
             
         }
         //アラートにtextFieldを追加
@@ -96,35 +160,9 @@ class ToDoListViewController: UITableViewController {
         present(alert, animated: true, completion: nil)
     }
     
-    func saveItems() {
-        do {
-            try context.save()
-        } catch {
-            print("Error saving context \(error)")
-        }
+    func loadItems() {
         
-        tableView.reloadData()
-    }
-    
-    func loadItems(with request: NSFetchRequest<Item> = Item.fetchRequest(), predicate: NSPredicate? = nil) {
-        
-        //フェッチリクエストに絞り込み条件をつけるためにprediateプロパティを設定する
-        //%@: selectedCategory!.name!を埋め込む
-        let categoryPredicate = NSPredicate(format: "parentCategory.name MATCHES %@", selectedCategory!.name!)
-        
-        //追加の検索条件 (predicate)
-        if let additionalPredicate = predicate {
-            //複合predicate
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [categoryPredicate, additionalPredicate])
-        } else {
-            request.predicate = categoryPredicate
-        }
-       
-        do {
-            itemArray = try context.fetch(request)
-        } catch {
-            print("Error fetching data from context \(error)")
-        }
+        toDoItems = selectedCategory?.items.sorted(byKeyPath: "dateCreated", ascending: true)
         
         tableView.reloadData()
     }
@@ -137,28 +175,21 @@ class ToDoListViewController: UITableViewController {
 extension ToDoListViewController: UISearchBarDelegate {
     
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+
+        toDoItems = toDoItems?.filter("title CONTAINS[cd] %@", searchBar.text!).sorted(byKeyPath: "dateCreated", ascending: true)
         
-        let request: NSFetchRequest<Item> = Item.fetchRequest()
-        
-        //CONTAINS[cd] [c]: 大文字小文字の区別はしない、[d]: 発音記号の有無は同一文字として扱う
-        let predicate = NSPredicate(format: "title CONTAINS[cd] %@", searchBar.text!)
-        
-        //調べるときのソート (何順でソートするか)
-        request.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
-        
-        loadItems(with: request, predicate: predicate)
+        tableView.reloadData()
     }
-    
+
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
         //文字が0になったら
         if searchBar.text?.count == 0 {
             loadItems()
-            
+
             DispatchQueue.main.async {
                 searchBar.resignFirstResponder()
             }
         }
     }
-    
 }
 

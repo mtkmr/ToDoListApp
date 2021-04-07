@@ -6,33 +6,53 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
+import ChameleonFramework
 
-class CategoryTableViewController: UITableViewController {
-    
-    //category配列を用意
-    var categories = [Category]()
-    
-    //NSManagedObjectContextをオブジェクト化
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
 
+class CategoryTableViewController: SwipeTableViewController {
+    
+    let realm = try! Realm()
+    
+    //category配列を用意、レルムのコンテナタイプの自動更新
+    var categories: Results<Category>?
+    
+    
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        tableView.separatorStyle = .none
 
         loadCategories()
         
     }
     
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        guard let navBar = navigationController?.navigationBar else {fatalError("Navigation controller does not exist.")}
+        
+        navBar.backgroundColor = UIColor(hexString: "1D9BF6")
+        
+    }
+    
     //MARK - TableView Datasource Methods
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return categories.count
+        return categories?.count ?? 1
     }
     
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         
-        let cell = tableView.dequeueReusableCell(withIdentifier: "CategoryCell", for: indexPath)
+        //スーパークラスのセルを使う
+        let cell = super.tableView(tableView, cellForRowAt: indexPath)
         
-        cell.textLabel?.text = categories[indexPath.row].name
+        if let category = categories?[indexPath.row] {
+            cell.textLabel?.text = category.name ?? "カテゴリーはまだ追加されていません。"
+            
+            guard let categoryColor = UIColor(hexString: category.color) else {fatalError()}
+            cell.backgroundColor = categoryColor
+            cell.textLabel?.textColor = ContrastColorOf(categoryColor, returnFlat: true)
+        }
         
         return cell
     }
@@ -46,14 +66,16 @@ class CategoryTableViewController: UITableViewController {
         let destinationVC = segue.destination as! ToDoListViewController
         
         if let indexPath = tableView.indexPathForSelectedRow {
-            destinationVC.selectedCategory = categories[indexPath.row]
+            destinationVC.selectedCategory = categories?[indexPath.row]
         }
     }
     
-    //MARK - Data Manipulation Methods
-    func saveCategories() {
+    //MARK: - Data Manipulation Methods
+    func save(category: Category) {
         do {
-            try context.save()
+            try realm.write{
+                realm.add(category)
+            }
         } catch {
             print("Error saving category \(error)")
         }
@@ -64,18 +86,27 @@ class CategoryTableViewController: UITableViewController {
     
     func loadCategories() {
         
-        let request: NSFetchRequest<Category> = Category.fetchRequest()
-        
-        do {
-            categories = try context.fetch(request)
-        } catch {
-            print("Error loading category \(error)")
-        }
+        categories = realm.objects(Category.self)
         
         tableView.reloadData()
     }
     
-    //MARK - Add New Categories
+    //MARK: -Delete Data From Swipe
+    override func updateDataModel(at indexPath: IndexPath) {
+        super.updateDataModel(at: indexPath)
+        
+        if let categoryForDeletion = categories?[indexPath.row] {
+            do {
+                try realm.write {
+                    realm.delete(categoryForDeletion)
+                }
+            } catch {
+                print("Error deleting category, \(error)")
+            }
+        }
+    }
+    
+    //MARK: - Add New Categories
     @IBAction func addButtonPressed(_ sender: UIBarButtonItem) {
         
         var textField = UITextField()
@@ -84,12 +115,12 @@ class CategoryTableViewController: UITableViewController {
         let alert = UIAlertController(title: "新しいCategoryを追加します", message: "", preferredStyle: .alert)
         let action = UIAlertAction(title: "追加", style: .default) { [weak self] (action) in
             
-            let newCategory = Category(context: self!.context)
+            let newCategory = Category()
             newCategory.name = textField.text!
+            //色の文字列を取得
+            newCategory.color = UIColor.randomFlat().hexValue()
             
-            self?.categories.append(newCategory)
-            
-            self?.saveCategories()
+            self?.save(category: newCategory)
             
         }
         alert.addAction(action)
@@ -101,3 +132,4 @@ class CategoryTableViewController: UITableViewController {
         present(alert, animated: true, completion: nil)
     }
 }
+

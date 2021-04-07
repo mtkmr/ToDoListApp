@@ -6,7 +6,7 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -14,6 +14,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        
+        //realmデータベースがどこにあるのかプリント
+//        print(Realm.Configuration.defaultConfiguration.fileURL)
+        
+        do {
+            _ = try Realm()
+        } catch {
+            print("Error installing new realm, \(error)")
+        }
+        
         
         
         return true
@@ -33,44 +43,5 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Use this method to release any resources that were specific to the discarded scenes, as they will not return.
     }
     
-    //アプリが終了しようとし、メモリが削除されようとしているときに呼ばれる
-    func applicationWillTerminate(_ application: UIApplication) {
-        saveContext()
-    }
-
-    
-    // MARK: - Core Data stack
-
-    //各クラスを管理するクラス (NSPersistentContainer)をインスタンス化
-    lazy var persistentContainer: NSPersistentContainer = {
-        let container = NSPersistentContainer(name: "DataModel")
-        //永続ストアをロードして初期化する
-        container.loadPersistentStores(completionHandler: { (storeDescription, error) in
-            if let error = error as NSError? {
-               
-                fatalError("Unresolved error \(error), \(error.userInfo)")
-            }
-        })
-        return container
-    }()
-
-    // MARK: - Core Data Saving support
-
-    
-    func saveContext () {
-        //NSPersistentContainer内にラッピングされているNSManagedObjectContextをインスタンス化
-        let context = persistentContainer.viewContext
-        //NSManagedObjectContextに変更があった場合は保存する
-        if context.hasChanges {
-            do {
-                try context.save()
-            } catch {
-                
-                let nserror = error as NSError
-                fatalError("Unresolved error \(nserror), \(nserror.userInfo)")
-            }
-        }
-    }
-
 }
 
